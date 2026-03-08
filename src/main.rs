@@ -42,7 +42,8 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1080.0, 720.0])
+            .with_inner_size([900.0, 720.0])
+            .with_min_inner_size([700.0, 700.0]) // Minimum width: 500px, minimum height: 400px
             .with_drag_and_drop(true),
         ..Default::default()
     };

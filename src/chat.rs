@@ -120,8 +120,8 @@ impl ChatExample {
                         // Account for margins on each side - increase left margin if messages are too close to left
                         let left_margin = 10.0;  // Adjust this if messages need more space from left
                         let right_margin = 10.0;
-                        // Maximum message width is 50% of parent width
-                        let max_msg_width = ui.available_width() * 0.5;
+                        // Maximum message width is 100% of parent width (minus margins)
+                        let max_msg_width = ui.available_width() - left_margin - right_margin;
 
                         // Render messages with full control over spacing
                         // Direct rendering without extra layout wrappers to minimize spacing
@@ -132,13 +132,18 @@ impl ChatExample {
                                 let layout = Layout::top_down(Align::Min);
 
                                 ui.with_layout(layout, |ui| {
-                                    // Constrain to max width to prevent overflow
+                                    // Allow messages to use full width (minus margins)
                                     ui.set_max_width(max_msg_width);
 
                                     let msg_color = if is_message_from_myself {
                                         ui.style().visuals.widgets.inactive.bg_fill
                                     } else {
-                                        ui.style().visuals.extreme_bg_color
+                                        // Check for specific message types and apply custom colors
+                                        match item.from.as_deref() {
+                                            Some("System") => egui::Color32::from_rgba_unmultiplied(204, 85, 0, 50), // Dark orange with 50% opacity
+                                            Some("Agent Manager") => egui::Color32::from_rgba_unmultiplied(0, 100, 0, 128), // Dark green with 50% opacity
+                                            _ => ui.style().visuals.extreme_bg_color, // Default black for other messages
+                                        }
                                     };
 
                                     let rounding = 8.0;
@@ -154,76 +159,48 @@ impl ChatExample {
                                     // Calculate available width for content (accounting for margins)
                                     let content_max_width = max_msg_width - margin * 2.0;
                                     
-                                    // For Human messages, measure content width so they don't stretch to full width
-                                    // But cap at 50% of parent width (max_msg_width)
-                                    let frame_width = if is_message_from_myself {
-                                        // Measure the content to determine natural width
-                                        let name_str = item.from.as_deref().unwrap_or("");
-                                        
-                                        // Measure text width using the UI context
-                                        let name_width = ui.fonts(|f| {
-                                            let name_galley = f.layout_no_wrap(
-                                                name_str.to_string(),
-                                                egui::TextStyle::Body.resolve(ui.style()),
-                                                egui::Color32::WHITE,
-                                            );
-                                            name_galley.size().x
-                                        });
-                                        
-                                        let content_width = ui.fonts(|f| {
-                                            let content_galley = f.layout_no_wrap(
-                                                item.content.clone(),
-                                                egui::TextStyle::Body.resolve(ui.style()),
-                                                egui::Color32::TRANSPARENT,
-                                            );
-                                            content_galley.size().x
-                                        });
-                                        
-                                        // Use the wider of the two, but cap at 50% of parent width
-                                        let measured_width = f32::max(name_width, content_width);
-                                        let desired_width = measured_width + margin * 2.0 + 16.0; // Add some padding
-                                        
-                                        // Cap at max width (50% of parent) and ensure minimum width
-                                        f32::min(desired_width, max_msg_width).max(50.0) // Minimum 50px width
-                                    } else {
-                                        // Bot messages: also cap at 50% of parent width
-                                        max_msg_width
-                                    };
-                                    
                                     Frame::default()
                                         .inner_margin(margin)
                                         .outer_margin(outer_margin)
                                         .fill(msg_color)
                                         .rounding(rounding)
                                         .show(ui, |ui| {
-                                            // Both Human and Bot messages are constrained to 50% of parent width
-                                            // Text will wrap to next line if it exceeds this width
-                                            if is_message_from_myself {
-                                                // Human: use measured width, but cap at 50% of parent
-                                                ui.set_max_width(frame_width - margin * 2.0);
-                                            } else {
-                                                // Bot: use max width constraint (50% of parent)
-                                                ui.set_max_width(content_max_width);
-                                            }
+                                            // All messages can use full width, text will wrap naturally
+                                            ui.set_max_width(content_max_width);
                                             ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                                // Determine text color based on message type
+                                                let is_system_or_agent = matches!(item.from.as_deref(), Some("System") | Some("Agent Manager"));
+                                                let header_color = if is_system_or_agent {
+                                                    egui::Color32::BLACK
+                                                } else {
+                                                    egui::Color32::WHITE
+                                                };
+                                                let content_color = if is_system_or_agent {
+                                                    egui::Color32::from_rgba_unmultiplied(30, 30, 30, 255)
+                                                    //egui::Color32::DARK_GRAY
+                                                } else {
+                                                    egui::Color32::from_rgba_unmultiplied(150, 150,  150, 255)
+                                                    //egui::Color32::WHITE
+                                                };
+                                                
                                                 if let Some(from) = &item.from {
                                                     // For Ollama messages, show "Ollama" in white and model name in gray
                                                     if from.starts_with("Ollama ") {
                                                         let parts: Vec<&str> = from.splitn(2, ' ').collect();
                                                         if parts.len() == 2 {
                                                             ui.horizontal(|ui| {
-                                                                ui.label(egui::RichText::new("Ollama").strong().color(egui::Color32::WHITE));
+                                                                ui.label(egui::RichText::new("Ollama").strong().color(header_color));
                                                                 ui.label(egui::RichText::new(parts[1]).color(egui::Color32::DARK_GRAY));
                                                             });
                                                         } else {
-                                                            ui.label(egui::RichText::new(from).strong().color(egui::Color32::WHITE));
+                                                            ui.label(egui::RichText::new(from).strong().color(header_color));
                                                         }
                                                     } else {
-                                                        ui.label(egui::RichText::new(from).strong().color(egui::Color32::WHITE));
+                                                        ui.label(egui::RichText::new(from).strong().color(header_color));
                                                     }
                                                 }
                                                 // Label automatically wraps when max_width is set
-                                                ui.label(&item.content);
+                                                ui.label(egui::RichText::new(&item.content).color(content_color));
                                             });
                                         });
                                 });

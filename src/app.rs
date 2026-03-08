@@ -20,6 +20,7 @@ pub struct MyApp {
     chat_token_limit: i32,
     chat_token_limit_enabled: bool,
     pub mcp: MCPController,
+    inspector_visible: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -53,6 +54,7 @@ impl Default for MyApp {
             chat_token_limit: 70,
             chat_token_limit_enabled: false,
             mcp,
+            inspector_visible: false,
         }
     }
 }
@@ -61,10 +63,17 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let available_width = ui.available_width();
-            let total_width = available_width * 0.985;
-            let left_width = total_width * 0.2;
-            let center_width = total_width * 0.6;
-            let right_width = total_width * 0.2;
+            let left_width = 200.0; // Fixed width of 200px
+            let right_width = 200.0; // Fixed width of 200px
+            // Adjust center and right widths based on inspector visibility
+            let (center_width, right_width) = if self.inspector_visible {
+                // Ensure widths are never negative, subtract 20px for testing
+                let center = (available_width - left_width - right_width - 10.0).max(0.0);
+                (center, right_width)
+            } else {
+                // Ensure center width is never negative, subtract 20px for testing
+                ((available_width - left_width - 10.0).max(0.0), 0.0) // Chat takes remaining space when inspector is hidden
+            };
             let available_height = ui.available_height();
             
             let light_gray_bg = egui::Color32::from_rgb(40, 40, 40);
@@ -90,180 +99,13 @@ impl eframe::App for MyApp {
                                     // Chat 1 button - 40% of column width
                                     let button_width = left_width * 0.4;
                                     ui.add_sized([button_width, 0.0], egui::Button::new("Chat 1"));
-                                });
-                            });
-                        });
-                    });
-                
-                // Center column - 60% width (top bar + chat area)
-                ui.vertical(|ui| {
-                    ui.set_min_width(center_width);
-                    ui.set_max_width(center_width);
-                    
-                    // Top bar - 20% of window height
-                    let top_bar_height = available_height * 0.08;
-                    // Set top bar width in pixels (or use center_width to match chat area)
-                    let top_bar_width = 200.0; // Change this to a fixed pixel value like 500.0 if desired
-
-                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        ui.set_min_width(top_bar_width);
-                        ui.set_max_width(top_bar_width);
-                        Frame::default()
-                            .fill(light_gray_bg)
-                            .inner_margin(0.0)
-                            .outer_margin(0.0)
-                            .show(ui, |ui| {
-                                ui.set_min_width(top_bar_width);
-                                ui.set_max_width(top_bar_width);
-                                ui.set_height(top_bar_height);
-                                ui.horizontal(|ui| {
-                                    ui.set_min_width(top_bar_width);
-                                    ui.set_max_width(top_bar_width);
-                                    // Left half - Models section, with left margin
-                                    let half_width = top_bar_width * 0.5;
-                                    ui.vertical(|ui| {
-                                        ui.set_min_width(half_width);
-                                        ui.set_max_width(half_width);
-                                        ui.set_height(top_bar_height);
-                                        ui.horizontal(|ui| {
-                                            // Left margin inside top bar column
-                                            ui.add_space(8.0);
-                                            ui.vertical(|ui| {
-                                                ui.add_space(6.0);
-                                                
-                                                ui.label(egui::RichText::new("Chat Model").strong());
-                                                ui.add_space(4.0);
-
-                                                // Use Ollama models for the combobox
-                                                let ollama_models = self.ollama.models();
-                                                let ollama_status = self.ollama.status();
-                                                
-                                                if ollama_status == OllamaStatus::Running && !ollama_models.is_empty() {
-                                                    egui::ComboBox::from_id_source("model_selector")
-                                                        .selected_text(if self.selected_model.is_empty() {
-                                                            "Select model"
-                                                        } else {
-                                                            &self.selected_model
-                                                        })
-                                                        .show_ui(ui, |ui| {
-                                                            for model in &ollama_models {
-                                                                if ui.selectable_label(self.selected_model == *model, model).clicked() {
-                                                                    self.selected_model = model.clone();
-                                                                }
-                                                            }
-                                                        });
-                                                } else {
-                                                    ui.label(egui::RichText::new("No models available").small().weak());
-                                                }
-                                                
-                                                // Token limit toggle and input for main chat
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.checkbox(&mut self.chat_token_limit_enabled, "Token Limit");
-                                                    if self.chat_token_limit_enabled {
-                                                        ui.label("Tokens:");
-                                                        ui.add_sized(
-                                                            [40.0, 18.0],
-                                                            egui::DragValue::new(&mut self.chat_token_limit)
-                                                                .range(1..=1000)
-                                                                .speed(1.0),
-                                                        );
-                                                    }
-                                                });
-                                                ui.add_space(4.0);
-                                            });
-                                        });
-                                    });
                                     
-                                    // Right half - empty for now
-                                    ui.vertical(|ui| {
-                                        ui.set_min_width(half_width);
-                                        ui.set_max_width(half_width);
-                                        ui.set_height(top_bar_height);
-                                    });
-                                });
-                            });
-                    });
-                    
-                    ui.add_space(4.0);  
-                    // Chat area - remaining height
-                    Frame::default()
-                        .fill(light_gray_bg)
-                        .inner_margin(0.0)
-                        .outer_margin(0.0)
-                        .show(ui, |ui| {
-                            ui.set_min_width(center_width);
-                            ui.set_max_width(center_width);
-                            ui.set_height(available_height - top_bar_height - 30.0);
-                            
-                            // Set up message handler for chat with current values
-                            // Update each frame to ensure we have the latest model selection and settings
-                            let selected_model = self.selected_model.clone();
-                            let ollama_status = self.ollama.status();
-                            let ollama_controller = self.ollama.clone();
-                            let chat_token_limit = if self.chat_token_limit_enabled {
-                                Some(self.chat_token_limit)
-                            } else {
-                                None
-                            };
-                            let tx = self.chat.inbox().sender();
-                            
-                            let waiting_flag = self.chat.waiting_for_response().clone();
-                            self.chat.set_message_handler(Box::new(move |message: String| {
-                                let tx_clone = tx.clone();
-                                if selected_model.is_empty() {
-                                    // No model selected, respond with "Please select a model"
-                                    let bot_message = crate::chat::ChatMessage {
-                                        content: "Please select a model".to_string(),
-                                        from: Some("System".to_string()),
-                                    };
-                                    tx_clone.send(bot_message).ok();
-                                } else if ollama_status == crate::ollama::OllamaStatus::Running {
-                                    // Model selected and Ollama is running, send to Ollama
-                                    // Set waiting flag to true
-                                    *waiting_flag.lock().unwrap() = true;
+                                    // Separator
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
                                     
-                                    let model_clone = selected_model.clone();
-                                    let tx_for_ollama = tx_clone.clone();
-                                    let waiting_flag_clone = waiting_flag.clone();
-                                    ollama_controller.send_message(
-                                        model_clone,
-                                        message,
-                                        chat_token_limit,
-                                        Box::new(move |msg| {
-                                            // Clear waiting flag when response arrives
-                                            *waiting_flag_clone.lock().unwrap() = false;
-                                            tx_for_ollama.send(msg).ok();
-                                        }),
-                                    );
-                                } else {
-                                    // Ollama not running
-                                    let bot_message = crate::chat::ChatMessage {
-                                        content: "Ollama is not running. Please check Ollama status.".to_string(),
-                                        from: Some("System".to_string()),
-                                    };
-                                    tx_clone.send(bot_message).ok();
-                                }
-                            }));
-                            
-                            self.chat.ui(ui);
-                        });
-                });
-                
-                // Right column - 20% width
-                Frame::default()
-                    .fill(light_gray_bg)
-                    .inner_margin(0.0)
-                    .outer_margin(0.0)
-                    .show(ui, |ui| {
-                        ui.set_width(right_width);
-                        ui.set_height(available_height);
-                        ui.vertical(|ui| {
-                            // Server status at the top
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.vertical(|ui| {
+                                    // Server Status
                                     ui.label(egui::RichText::new("Server Status").strong());
                                     ui.add_space(4.0);
                                     
@@ -434,13 +276,177 @@ impl eframe::App for MyApp {
                                         let new_state = !is_enabled;
                                         self.mcp.set_enabled(new_state);
                                     }
-                                    
-                                    ui.add_space(8.0);
-                                    ui.separator();                                  
                                 });
                             });
                         });
                     });
+                
+                // Center column - 60% width (top bar + chat area)
+                ui.vertical(|ui| {
+                    ui.set_min_width(center_width);
+                    ui.set_max_width(center_width);
+                    
+                    // Top bar - 20% of window height
+                    let top_bar_height = available_height * 0.08;
+                    // Use center_width minus 10px to match chat area and adapt to inspector visibility
+                    let top_bar_width = center_width;
+
+                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                        ui.set_min_width(top_bar_width);
+                        ui.set_max_width(top_bar_width);
+                        Frame::default()
+                            .fill(light_gray_bg)
+                            .inner_margin(0.0)
+                            .outer_margin(0.0)
+                            .show(ui, |ui| {
+                                ui.set_min_width(top_bar_width);
+                                ui.set_max_width(top_bar_width);
+                                ui.set_height(top_bar_height);
+                                ui.horizontal(|ui| {
+                                    ui.set_min_width(top_bar_width);
+                                    ui.set_max_width(top_bar_width);
+                                    // Left side - Models section, with left margin
+                                    ui.horizontal(|ui| {
+                                        // Left margin inside top bar column
+                                        ui.add_space(8.0);
+                                        ui.vertical(|ui| {
+                                            ui.add_space(6.0);
+                                            
+                                            ui.label(egui::RichText::new("Chat Model").strong());
+                                            ui.add_space(4.0);
+
+                                            // Use Ollama models for the combobox
+                                            let ollama_models = self.ollama.models();
+                                            let ollama_status = self.ollama.status();
+                                            
+                                            if ollama_status == OllamaStatus::Running && !ollama_models.is_empty() {
+                                                egui::ComboBox::from_id_source("model_selector")
+                                                    .selected_text(if self.selected_model.is_empty() {
+                                                        "Select model"
+                                                    } else {
+                                                        &self.selected_model
+                                                    })
+                                                    .show_ui(ui, |ui| {
+                                                        for model in &ollama_models {
+                                                            if ui.selectable_label(self.selected_model == *model, model).clicked() {
+                                                                self.selected_model = model.clone();
+                                                            }
+                                                        }
+                                                    });
+                                            } else {
+                                                ui.label(egui::RichText::new("No models available").small().weak());
+                                            }
+                                            
+                                            // Token limit toggle and input for main chat
+                                            ui.add_space(4.0);
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(&mut self.chat_token_limit_enabled, "Token Limit");
+                                                if self.chat_token_limit_enabled {
+                                                    ui.label("Tokens:");
+                                                    ui.add_sized(
+                                                        [40.0, 18.0],
+                                                        egui::DragValue::new(&mut self.chat_token_limit)
+                                                            .range(1..=1000)
+                                                            .speed(1.0),
+                                                    );
+                                                }
+                                            });
+                                            ui.add_space(4.0);
+                                        });
+                                    });
+                                    
+                                    // Push Inspector button to the right edge
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.add_space(8.0);
+                                        ui.vertical(|ui| {
+                                            ui.add_space(6.0);
+                                            
+                                            if ui.button("Inspector").clicked() {
+                                                self.inspector_visible = !self.inspector_visible;
+                                            }
+                                        });
+                                    });
+                                });
+                            });
+                    });
+                    
+                    ui.add_space(4.0);  
+                    // Chat area - remaining height
+                    Frame::default()
+                        .fill(light_gray_bg)
+                        .inner_margin(0.0)
+                        .outer_margin(0.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(center_width);
+                            ui.set_max_width(center_width);
+                            ui.set_height(available_height - top_bar_height - 28.0); // 2px more height to match columns
+                            
+                            // Set up message handler for chat with current values
+                            // Update each frame to ensure we have the latest model selection and settings
+                            let selected_model = self.selected_model.clone();
+                            let ollama_status = self.ollama.status();
+                            let ollama_controller = self.ollama.clone();
+                            let chat_token_limit = if self.chat_token_limit_enabled {
+                                Some(self.chat_token_limit)
+                            } else {
+                                None
+                            };
+                            let tx = self.chat.inbox().sender();
+                            
+                            let waiting_flag = self.chat.waiting_for_response().clone();
+                            self.chat.set_message_handler(Box::new(move |message: String| {
+                                let tx_clone = tx.clone();
+                                if selected_model.is_empty() {
+                                    // No model selected, respond with "Please select a model"
+                                    let bot_message = crate::chat::ChatMessage {
+                                        content: "Please select a model".to_string(),
+                                        from: Some("System".to_string()),
+                                    };
+                                    tx_clone.send(bot_message).ok();
+                                } else if ollama_status == crate::ollama::OllamaStatus::Running {
+                                    // Model selected and Ollama is running, send to Ollama
+                                    // Set waiting flag to true
+                                    *waiting_flag.lock().unwrap() = true;
+                                    
+                                    let model_clone = selected_model.clone();
+                                    let tx_for_ollama = tx_clone.clone();
+                                    let waiting_flag_clone = waiting_flag.clone();
+                                    ollama_controller.send_message(
+                                        model_clone,
+                                        message,
+                                        chat_token_limit,
+                                        Box::new(move |msg| {
+                                            // Clear waiting flag when response arrives
+                                            *waiting_flag_clone.lock().unwrap() = false;
+                                            tx_for_ollama.send(msg).ok();
+                                        }),
+                                    );
+                                } else {
+                                    // Ollama not running
+                                    let bot_message = crate::chat::ChatMessage {
+                                        content: "Ollama is not running. Please check Ollama status.".to_string(),
+                                        from: Some("System".to_string()),
+                                    };
+                                    tx_clone.send(bot_message).ok();
+                                }
+                            }));
+                            
+                            self.chat.ui(ui);
+                        });
+                });
+                
+                // Right column - 20% width (only shown when inspector is visible)
+                if self.inspector_visible {
+                    Frame::default()
+                        .fill(light_gray_bg)
+                        .inner_margin(0.0)
+                        .outer_margin(0.0)
+                        .show(ui, |ui| {
+                            ui.set_width(right_width);
+                            ui.set_height(available_height);
+                            // Right column content can be added here
+                        });
+                }
             });
         });
     }

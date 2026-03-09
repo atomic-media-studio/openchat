@@ -164,7 +164,10 @@ impl ChatExample {
                                     // Calculate available width for content (accounting for margins)
                                     let content_max_width = max_msg_width - margin * 2.0;
 
-                                    
+                                    // Add 4px spacing between Agent Manager and the first row of content
+                                    if item.from.as_deref() == Some("Agent Manager") {
+                                        ui.add_space(4.0);
+                                    }
                                     
                                     Frame::default()
                                         .inner_margin(margin)

@@ -26,6 +26,15 @@ struct ConversationMessage {
     timestamp: String,
 }
 
+// Evaluator result format from web-agents (Agent Evaluator)
+#[derive(Serialize, Deserialize, Debug)]
+struct EvaluatorResult {
+    evaluator_name: String,
+    sentiment: String,
+    message: String,
+    timestamp: String,
+}
+
 /// Start the HTTP server that receives POST requests
 pub async fn start_server(
     addr: SocketAddr,
@@ -84,23 +93,27 @@ async fn handle_request(
             let body_str = String::from_utf8_lossy(&body_bytes);
             println!("Received POST request: {}", body_str);
 
-            // Try to parse as ConversationMessage JSON format
+            // Try to parse as ConversationMessage or EvaluatorResult, then fall back to plain text
             let message = match serde_json::from_str::<ConversationMessage>(&body_str) {
                 Ok(conv_msg) => {
-                    // Successfully parsed JSON - use sender_name and message
                     println!("Parsed JSON message from: {}", conv_msg.sender_name);
                     ChatMessage {
                         content: conv_msg.message,
                         from: Some(conv_msg.sender_name),
                     }
                 }
-                Err(_) => {
-                    // Not valid JSON or different format - treat as plain text
-                    // Try to extract sender name if it's a simple format, otherwise use "API"
-                    ChatMessage {
-                content: body_str.to_string(),
-                from: Some("API".to_string()),
+                Err(_) => match serde_json::from_str::<EvaluatorResult>(&body_str) {
+                    Ok(eval_result) => {
+                        println!("Parsed evaluator result from: {} -> {}", eval_result.evaluator_name, eval_result.sentiment);
+                        ChatMessage {
+                            content: format!("{}: {}", eval_result.sentiment, eval_result.message),
+                            from: Some(eval_result.evaluator_name),
+                        }
                     }
+                    Err(_) => ChatMessage {
+                        content: body_str.to_string(),
+                        from: Some("API".to_string()),
+                    },
                 }
             };
 

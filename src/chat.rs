@@ -126,8 +126,6 @@ impl ChatExample {
                         // Render messages with full control over spacing
                         // Direct rendering without extra layout wrappers to minimize spacing
                         for item in &self.messages {
-                                let is_message_from_myself = item.from.as_deref() == Some("Human");
-
                                 // Both Human and Bot messages align to the left
                                 let layout = Layout::top_down(Align::Min);
 
@@ -135,16 +133,15 @@ impl ChatExample {
                                     // Allow messages to use full width (minus margins)
                                     ui.set_max_width(max_msg_width);
 
-                                    let msg_color = if is_message_from_myself {
-                                        ui.style().visuals.widgets.inactive.bg_fill
-                                    } else {
-                                        // All messages use black background
-                                        ui.style().visuals.extreme_bg_color
-                                    };
+                                    // All messages use dark gray background.
+                                    let msg_color = egui::Color32::from_rgb(50, 50, 50);
                                     
                                     // Determine border color for System and Agent Manager messages
                                     let border_color = match item.from.as_deref() {
-                                        Some("System") => egui::Color32::from_rgb(204, 85, 0), // Dark orange
+                                        Some("Human") => egui::Color32::from_rgb(0, 255, 0), // Green
+                                        Some(from) if from.starts_with("Ollama") => egui::Color32::from_rgb(255, 255, 0), // Yellow
+                                        Some("Agent Evaluator") => egui::Color32::from_rgb(255, 0, 0), // Red
+                                        Some("System") | Some("API") => egui::Color32::from_rgb(204, 85, 0), // Dark orange
                                         Some("Agent Manager") => egui::Color32::from_rgb(0, 100, 0), // Dark green
                                         _ => egui::Color32::TRANSPARENT, // No border for other messages
                                     };

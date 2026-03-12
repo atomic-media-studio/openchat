@@ -69,24 +69,32 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            let panel_gap = 8.0;
             let available_width = ui.available_width();
             let left_width = 200.0; // Fixed width of 200px
             let _right_width = 0.0;
-            let center_width = (available_width - left_width - 10.0).max(0.0);
             let available_height = ui.available_height();
+            let horizontal_spacing = ui.spacing().item_spacing.x;
+            let vertical_spacing = ui.spacing().item_spacing.y;
+            let center_width =
+                (available_width - (panel_gap * 2.0) - left_width - horizontal_spacing).max(0.0);
+                
+            let content_height = (available_height - (panel_gap * 2.0)).max(0.0);
             
             let light_gray_bg = egui::Color32::from_rgb(40, 40, 40);
+            let left_inner_margin = 8.0;
             
+            ui.add_space(panel_gap);
             ui.horizontal(|ui| {
                 // Left column - 20% width
                 Frame::default()
                     .fill(light_gray_bg)
-                    .inner_margin(egui::Margin::same(8.0))
+                    .inner_margin(egui::Margin::same(left_inner_margin))
                     .outer_margin(0.0)
                     .show(ui, |ui| {
                         ui.set_min_width(left_width);
                         ui.set_max_width(left_width);
-                        ui.set_height(available_height);
+                        ui.set_height((content_height - (left_inner_margin * 2.0)).max(0.0));
                         ui.vertical(|ui| {
                             // Top bar with tabs
                             ui.horizontal(|ui| {
@@ -107,17 +115,11 @@ impl eframe::App for MyApp {
                                 LeftColumnTab::General => {
                             // Chat Status with green border
                             egui::Frame::default()
-                                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0)))
                                 .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
                                 .rounding(4.0)
                                 .show(ui, |ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Chat Status").strong());
-                                        ui.add_space(4.0);
-                                        let button_width = left_width * 0.4;
-                                        ui.add_sized([button_width, 0.0], egui::Button::new("Chat 1"));
-                                        ui.add_space(4.0);
-                                        ui.label(egui::RichText::new("Chat Model").strong());
+                                        ui.label(egui::RichText::new("Chat Settings").strong());
                                         ui.add_space(4.0);
                                         let ollama_models = self.ollama.models();
                                         let ollama_status_chat = self.ollama.status();
@@ -151,7 +153,6 @@ impl eframe::App for MyApp {
                                                 );
                                             }
                                         });
-                                        ui.add_space(4.0);
                                     });
                                 });
                             ui.add_space(8.0);
@@ -160,7 +161,6 @@ impl eframe::App for MyApp {
                                     
                                     // Communication header with green border - 100% width
                                     egui::Frame::default()
-                                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0)))
                                         .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
                                         .rounding(4.0)
                                         .show(ui, |ui| {
@@ -204,7 +204,6 @@ impl eframe::App for MyApp {
 
                                     // Ollama Status card with green border
                                     egui::Frame::default()
-                                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0)))
                                         .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
                                         .rounding(4.0)
                                         .show(ui, |ui| {
@@ -315,7 +314,6 @@ impl eframe::App for MyApp {
 
                                     // MCP Status with green border
                                     egui::Frame::default()
-                                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0)))
                                         .inner_margin(egui::Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 6.0 })
                                         .rounding(4.0)
                                         .show(ui, |ui| {
@@ -355,8 +353,7 @@ impl eframe::App for MyApp {
                     ui.set_max_width(center_width);
                     
                     // Top bar - 20% of window height
-                    let top_bar_height = available_height * 0.08;
-                    // Use center_width minus 10px to match chat area and adapt to inspector visibility
+                    let top_bar_height = content_height * 0.08;
                     let top_bar_width = center_width;
 
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
@@ -387,7 +384,7 @@ impl eframe::App for MyApp {
                         .show(ui, |ui| {
                             ui.set_min_width(center_width);
                             ui.set_max_width(center_width);
-                            ui.set_height(available_height - top_bar_height - 28.0); // 2px more height to match columns
+                            ui.set_height((content_height - top_bar_height - 2.0 - (vertical_spacing * 2.0)).max(0.0));
                             
                             // Set up message handler for chat with current values
                             // Update each frame to ensure we have the latest model selection and settings
@@ -444,6 +441,7 @@ impl eframe::App for MyApp {
                 });
                 
             });
+            ui.add_space(panel_gap);
         });
     }
 }

@@ -141,8 +141,9 @@ impl ChatExample {
                                         Some("Human") => egui::Color32::from_rgb(0, 255, 0), // Green
                                         Some(from) if from.starts_with("Ollama") => egui::Color32::from_rgb(255, 255, 0), // Yellow
                                         Some("Agent Evaluator") => egui::Color32::from_rgb(255, 0, 0), // Red
+                                        Some(from) if from.starts_with("Agent") => egui::Color32::from_rgb(255, 255, 0), // Yellow
                                         Some("System") | Some("API") => egui::Color32::from_rgb(204, 85, 0), // Dark orange
-                                        Some("Agent Manager") => egui::Color32::from_rgb(0, 100, 0), // Dark green
+                                        Some("Agent Manager") => egui::Color32::from_rgb(255, 0, 0), // Red
                                         _ => egui::Color32::TRANSPARENT, // No border for other messages
                                     };
                                     

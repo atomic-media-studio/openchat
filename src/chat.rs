@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{Align, Frame, Layout, ScrollArea, Ui, Vec2};
 use egui_inbox::UiInbox;
@@ -24,6 +25,7 @@ pub type MessageHandler = Box<dyn Fn(String) + Send + Sync>;
 
 pub struct ChatExample {
     messages: Vec<ChatMessage>, // Simple Vec instead of InfiniteScroll
+    message_timestamps: Vec<String>,
     inbox: UiInbox<ChatMessage>,
     #[allow(dead_code)]
     history_loader: Arc<HistoryLoader>,
@@ -40,6 +42,18 @@ impl Default for ChatExample {
 }
 
 impl ChatExample {
+    fn current_timestamp_string() -> String {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let day_secs = now_secs % 86_400;
+        let hours = day_secs / 3_600;
+        let minutes = (day_secs % 3_600) / 60;
+        let seconds = day_secs % 60;
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    }
+
     pub fn new() -> Self {
         let history_loader = Arc::new(HistoryLoader::new());
         let inbox = UiInbox::new();
@@ -54,6 +68,7 @@ impl ChatExample {
 
         ChatExample {
             messages: initial_messages,
+            message_timestamps: vec![Self::current_timestamp_string()],
             inbox,
             history_loader,
             input_text: String::new(),
@@ -84,6 +99,7 @@ impl ChatExample {
             // Only add non-empty messages to prevent spacing issues
             if !message.content.trim().is_empty() {
                 self.messages.push(message);
+                self.message_timestamps.push(Self::current_timestamp_string());
             }
         });
 
@@ -103,117 +119,149 @@ impl ChatExample {
             let extra_scroll_padding = 80.0; // Extra padding to prevent scroll area from going too far down
 
             let input_panel_height = input_upward_spacing + input_height + input_margin + extra_scroll_padding;
-            
             let top_padding = 22.0; // 12.0 + 10.0 to move pink rectangle 10px down
+            let messages_area_height = (available_height - input_panel_height - top_padding - 20.0).max(0.0);
 
             Frame::none()
                 .inner_margin(egui::Margin { left: 0.0, right: 0.0, top: top_padding, bottom: 0.0 })
                 .show(ui, |ui| {
                     ScrollArea::vertical()
-                                .animated(false)
-                                .auto_shrink([false, false])
-                                .stick_to_bottom(true)
-                                .max_height(available_height - input_panel_height - top_padding - 20.0)
-                                .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
+                        .animated(false)
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .max_height(messages_area_height)
+                        .show(ui, |ui| {
+                            let row_width = ui.available_width();
+                            let left_margin = 10.0;
+                            let right_margin = 10.0;
 
-                        // Account for margins on each side - increase left margin if messages are too close to left
-                        let left_margin = 10.0;  // Adjust this if messages need more space from left
-                        let right_margin = 10.0;
-                        // Maximum message width is 100% of parent width (minus margins)
-                        let max_msg_width = ui.available_width() - left_margin - right_margin;
+                            for (idx, item) in self.messages.iter().enumerate() {
+                                let timestamp = self
+                                    .message_timestamps
+                                    .get(idx)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("--:--:--");
 
-                        // Render messages with full control over spacing
-                        // Direct rendering without extra layout wrappers to minimize spacing
-                        for item in &self.messages {
-                                // Both Human and Bot messages align to the left
-                                let layout = Layout::top_down(Align::Min);
-
-                                ui.with_layout(layout, |ui| {
-                                    // Allow messages to use full width (minus margins)
-                                    ui.set_max_width(max_msg_width);
-
-                                    // All messages use dark gray background.
-                                    let msg_color = egui::Color32::from_rgb(50, 50, 50);
-                                    
-                                    // Determine border color for System and Agent Manager messages
-                                    let border_color = match item.from.as_deref() {
-                                        Some("Human") => egui::Color32::from_rgb(0, 255, 0), // Green
-                                        Some(from) if from.starts_with("Ollama") => egui::Color32::from_rgb(255, 255, 0), // Yellow
-                                        Some("Agent Evaluator") => egui::Color32::from_rgb(255, 0, 0), // Red
-                                        Some("Agent Manager") => egui::Color32::from_rgb(255, 0, 0), // Red
-                                        Some(from) if from.starts_with("Agent") => egui::Color32::from_rgb(255, 255, 0), // Yellow
-                                        Some("System") | Some("API") => egui::Color32::from_rgb(204, 85, 0), // Dark orange
-                                        _ => egui::Color32::TRANSPARENT, // No border for other messages
-                                    };
-                                    
-                                    let border_width = if border_color != egui::Color32::TRANSPARENT { 1.0 } else { 0.0 };
-
-                                    let rounding = 4.0;
-                                    let margin = 8.0;
-                                    // 4px spacing between messages
-                                    let outer_margin = egui::Margin {
-                                        left: left_margin,   // 10px from left border
-                                        right: right_margin, // 10px from right border
-                                        top: 0.0,           // No extra space at top
-                                        bottom: 4.0,        // 4px spacing after each message
-                                    };
-                                    
-                                    // Calculate available width for content (accounting for margins)
-                                    let content_max_width = max_msg_width - margin * 2.0;
-
-                                    // Add 4px spacing between Agent Manager and the first row of content
-                                    if item.from.as_deref() == Some("Agent Manager") {
-                                        ui.add_space(4.0);
-                                    }
-                                    
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(row_width, 0.0),
+                                    Layout::left_to_right(Align::Min),
+                                    |ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    let separator_color = ui.visuals().widgets.noninteractive.bg_stroke.color;
                                     Frame::default()
-                                        .inner_margin(margin)
-                                        .outer_margin(outer_margin)
-                                        .fill(msg_color)
-                                        .rounding(rounding)
-                                        .stroke(egui::Stroke::new(border_width, border_color))
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::new(1.0, separator_color))
+                                        .rounding(4.0)
+                                        .inner_margin(egui::Margin::same(6.0))
+                                        .outer_margin(egui::Margin {
+                                            left: 6.0,
+                                            right: 0.0,
+                                            top: 0.0,
+                                            bottom: 4.0,
+                                        })
                                         .show(ui, |ui| {
-                                            // All messages can use full width, text will wrap naturally
-                                            ui.set_max_width(content_max_width);
-                                            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                                // All messages use the same text colors (white header, gray content)
-                                                let header_color = egui::Color32::WHITE;
-                                                let content_color = egui::Color32::from_rgba_unmultiplied(150, 150, 150, 255);
-                                                
-                                                if let Some(from) = &item.from {
-                                                    // For Ollama messages, show "Ollama" in white and model name in gray
-                                                    if from.starts_with("Ollama ") {
-                                                        let parts: Vec<&str> = from.splitn(2, ' ').collect();
-                                                        if parts.len() == 2 {
-                                                            ui.horizontal(|ui| {
-                                                                ui.label(egui::RichText::new("Ollama").strong().color(header_color));
-                                                                ui.label(egui::RichText::new(parts[1]).color(egui::Color32::DARK_GRAY));
-                                                            });
-                                                        } else {
-                                                            ui.label(egui::RichText::new(from).strong().color(header_color));
-                                                        }
-                                                    } else {
-                                                        ui.label(egui::RichText::new(from).strong().color(header_color));
-                                                    }
-                                                }
-                                                // Label automatically wraps when max_width is set
-                                                ui.label(egui::RichText::new(&item.content).color(content_color));
-                                            });
+                                            ui.label(
+                                                egui::RichText::new(timestamp)
+                                                    .size(12.0)
+                                                    .color(egui::Color32::WHITE),
+                                            );
                                         });
-                                });
+                                    ui.separator();
+
+                                    let messages_middle_width = ui.available_width().max(0.0);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(messages_middle_width, 0.0),
+                                        Layout::top_down(Align::Min),
+                                        |ui| {
+                                            let max_msg_width =
+                                                (messages_middle_width - left_margin - right_margin).max(0.0);
+                                            ui.set_min_width(messages_middle_width);
+                                            ui.set_max_width(messages_middle_width);
+                                            let layout = Layout::top_down(Align::Min);
+                                            ui.with_layout(layout, |ui| {
+                                                ui.set_max_width(max_msg_width);
+                                                let msg_color = egui::Color32::from_rgb(50, 50, 50);
+                                                let border_color = match item.from.as_deref() {
+                                                    Some("Human") => egui::Color32::from_rgb(0, 255, 0),
+                                                    Some(from) if from.starts_with("Ollama") => {
+                                                        egui::Color32::from_rgb(255, 255, 0)
+                                                    }
+                                                    Some("Agent Evaluator") => egui::Color32::from_rgb(255, 0, 0),
+                                                    Some("Agent Manager") => egui::Color32::from_rgb(255, 0, 0),
+                                                    Some(from) if from.starts_with("Agent") => {
+                                                        egui::Color32::from_rgb(255, 255, 0)
+                                                    }
+                                                    Some("System") | Some("API") => {
+                                                        egui::Color32::from_rgb(204, 85, 0)
+                                                    }
+                                                    _ => egui::Color32::TRANSPARENT,
+                                                };
+                                                let border_width = if border_color != egui::Color32::TRANSPARENT {
+                                                    1.0
+                                                } else {
+                                                    0.0
+                                                };
+                                                let rounding = 4.0;
+                                                let margin = 8.0;
+                                                let outer_margin = egui::Margin {
+                                                    left: left_margin,
+                                                    right: right_margin,
+                                                    top: 0.0,
+                                                    bottom: 4.0,
+                                                };
+                                                let content_max_width = max_msg_width - margin * 2.0;
+
+                                                if item.from.as_deref() == Some("Agent Manager") {
+                                                    ui.add_space(4.0);
+                                                }
+
+                                                Frame::default()
+                                                    .inner_margin(margin)
+                                                    .outer_margin(outer_margin)
+                                                    .fill(msg_color)
+                                                    .rounding(rounding)
+                                                    .stroke(egui::Stroke::new(border_width, border_color))
+                                                    .show(ui, |ui| {
+                                                        ui.set_max_width(content_max_width);
+                                                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                                            let header_color = egui::Color32::WHITE;
+                                                            let content_color =
+                                                                egui::Color32::from_rgba_unmultiplied(150, 150, 150, 255);
+
+                                                            if let Some(from) = &item.from {
+                                                                if from.starts_with("Ollama ") {
+                                                                    let parts: Vec<&str> = from.splitn(2, ' ').collect();
+                                                                    if parts.len() == 2 {
+                                                                        ui.horizontal(|ui| {
+                                                                            ui.label(egui::RichText::new("Ollama").strong().color(header_color));
+                                                                            ui.label(egui::RichText::new(parts[1]).color(egui::Color32::DARK_GRAY));
+                                                                        });
+                                                                    } else {
+                                                                        ui.label(egui::RichText::new(from).strong().color(header_color));
+                                                                    }
+                                                                } else {
+                                                                    ui.label(egui::RichText::new(from).strong().color(header_color));
+                                                                }
+                                                            }
+                                                            ui.label(egui::RichText::new(&item.content).color(content_color));
+                                                        });
+                                                    });
+                                            });
+                                        },
+                                    );
+                                    },
+                                );
                             }
-                            
-                            // Show spinner if waiting for response
+
                             let is_waiting = *self.waiting_for_response.lock().unwrap();
                             if is_waiting {
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
-                                    ui.add_space(left_margin);
+                                    ui.add_space(70.0 + left_margin);
                                     ui.spinner();
                                 });
                             }
-                                    }); // Close ScrollArea
+                        });
                 });
                 
                 // Add 4px spacing between scroll area and input panel
@@ -286,6 +334,7 @@ impl ChatExample {
                                 from: Some("Human".to_string()),
                             };
                             self.messages.push(user_message);
+                            self.message_timestamps.push(Self::current_timestamp_string());
 
                             // Use message handler if available, otherwise use default behavior
                             if let Some(handler) = &self.message_handler {

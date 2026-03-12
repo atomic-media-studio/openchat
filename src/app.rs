@@ -75,7 +75,6 @@ impl eframe::App for MyApp {
             let _right_width = 0.0;
             let available_height = ui.available_height();
             let horizontal_spacing = ui.spacing().item_spacing.x;
-            let vertical_spacing = ui.spacing().item_spacing.y;
             let center_width =
                 (available_width - (panel_gap * 2.0) - left_width - horizontal_spacing).max(0.0);
                 
@@ -377,14 +376,16 @@ impl eframe::App for MyApp {
                     
                     ui.add_space(4.0);  
                     // Chat area - remaining height
+                    let chat_area_height = (content_height - top_bar_height - 4.0).max(0.0);
                     Frame::default()
                         .fill(light_gray_bg)
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0)))
                         .inner_margin(0.0)
                         .outer_margin(0.0)
                         .show(ui, |ui| {
                             ui.set_min_width(center_width);
                             ui.set_max_width(center_width);
-                            ui.set_height((content_height - top_bar_height - 2.0 - (vertical_spacing * 2.0)).max(0.0));
+                            ui.set_height(chat_area_height);
                             
                             // Set up message handler for chat with current values
                             // Update each frame to ensure we have the latest model selection and settings

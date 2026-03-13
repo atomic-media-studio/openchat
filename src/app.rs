@@ -170,8 +170,8 @@ impl eframe::App for MyApp {
                                                 ui.add_space(4.0);
                                                 
                                                 let (status_text, status_color) = match self.server_status {
-                                                    ServerStatus::Running => ("● Running", egui::Color32::from_rgb(0, 255, 0)),
-                                                    ServerStatus::Stopped => ("● Stopped", egui::Color32::from_rgb(255, 0, 0)),
+                                                    ServerStatus::Running => ("● Running", egui::Color32::WHITE),
+                                                    ServerStatus::Stopped => ("● Stopped", egui::Color32::GRAY),
                                                 };
                                                 
                                                 ui.label(egui::RichText::new(status_text).color(status_color));
@@ -211,9 +211,9 @@ impl eframe::App for MyApp {
 
                                             let ollama_status = self.ollama.status();
                                             let (ollama_status_text, ollama_status_color) = match ollama_status {
-                                                OllamaStatus::Running => ("● Running", egui::Color32::from_rgb(0, 255, 0)),
-                                                OllamaStatus::Stopped => ("● Stopped", egui::Color32::from_rgb(255, 0, 0)),
-                                                OllamaStatus::Checking => ("● Checking", egui::Color32::from_rgb(255, 255, 0)),
+                                                OllamaStatus::Running => ("● Running", egui::Color32::WHITE),
+                                                OllamaStatus::Stopped => ("● Stopped", egui::Color32::GRAY),
+                                                OllamaStatus::Checking => ("● Checking", egui::Color32::GRAY),
                                             };
 
                                             ui.label(egui::RichText::new(ollama_status_text).color(ollama_status_color));
@@ -321,9 +321,9 @@ impl eframe::App for MyApp {
                                                 ui.add_space(4.0);
                                                 let mcp_status = self.mcp.status();
                                                 let (mcp_status_text, mcp_status_color) = match mcp_status {
-                                                    MCPStatus::Running => ("● Running", egui::Color32::from_rgb(0, 255, 0)),
-                                                    MCPStatus::Stopped => ("● Stopped", egui::Color32::from_rgb(255, 0, 0)),
-                                                    MCPStatus::Checking => ("● Checking", egui::Color32::from_rgb(255, 255, 0)),
+                                                    MCPStatus::Running => ("● Running", egui::Color32::WHITE),
+                                                    MCPStatus::Stopped => ("● Stopped", egui::Color32::GRAY),
+                                                    MCPStatus::Checking => ("● Checking", egui::Color32::GRAY),
                                                 };
                                                 ui.label(egui::RichText::new(mcp_status_text).color(mcp_status_color));
                                                 ui.add_space(4.0);
@@ -379,7 +379,6 @@ impl eframe::App for MyApp {
                     let chat_area_height = (content_height - top_bar_height - 4.0).max(0.0);
                     Frame::default()
                         .fill(light_gray_bg)
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 0)))
                         .inner_margin(0.0)
                         .outer_margin(0.0)
                         .show(ui, |ui| {

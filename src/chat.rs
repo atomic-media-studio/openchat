@@ -61,7 +61,7 @@ impl ChatExample {
         // Load initial message from history
         let initial_messages = vec![
             ChatMessage {
-                content: "Please select a model".to_string(),
+                content: "web-chat Started".to_string(),
                 from: Some("System".to_string()),
             }
         ];
@@ -186,7 +186,7 @@ impl ChatExample {
                                                     Some(from) if from.starts_with("Ollama") => {
                                                         egui::Color32::from_rgb(255, 255, 0)
                                                     }
-                                                    Some("Agent Evaluator") => egui::Color32::from_rgb(255, 0, 0),
+                                                    Some("Agent Evaluator") => egui::Color32::from_rgb(255, 105, 180),
                                                     Some("Agent Manager") => egui::Color32::from_rgb(255, 0, 0),
                                                     Some(from) if from.starts_with("Agent") => {
                                                         egui::Color32::from_rgb(255, 255, 0)

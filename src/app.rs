@@ -405,7 +405,7 @@ impl eframe::App for MyApp {
                                 if selected_model.is_empty() {
                                     // No model selected, respond with "Please select a model"
                                     let bot_message = crate::chat::ChatMessage {
-                                        content: "Please select a model".to_string(),
+                                        content: "web-chat Started".to_string(),
                                         from: Some("System".to_string()),
                                     };
                                     tx_clone.send(bot_message).ok();

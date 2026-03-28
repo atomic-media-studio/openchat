@@ -1,9 +1,28 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::chat::ChatMessage;
+use crate::audit::{self, AuditHandle, AuditRecord, SCHEMA_VERSION};
+use crate::chat::{ChatMessage, MessageCorrelation};
 
 const OLLAMA_URL: &str = "http://127.0.0.1:11434";
+
+fn correlated_chat_message(
+    content: String,
+    from: Option<String>,
+    conversation_id: &str,
+    request_id: &str,
+) -> ChatMessage {
+    ChatMessage {
+        content,
+        from,
+        correlation: Some(MessageCorrelation {
+            conversation_id: conversation_id.to_string(),
+            event_id: audit::new_id(),
+            request_id: request_id.to_string(),
+            timestamp_rfc3339: audit::now_rfc3339(),
+        }),
+    }
+}
 
 #[derive(Clone)]
 pub struct OllamaController {
@@ -82,25 +101,51 @@ impl OllamaController {
         model: String,
         message: String,
         num_predict: Option<i32>,
+        audit_handle: Arc<AuditHandle>,
+        conversation_id: String,
+        request_id: String,
         send_fn: Box<dyn Fn(ChatMessage) + Send + Sync>,
     ) {
         let model_clone = model.clone();
         std::thread::spawn(move || {
-            println!("[Ollama] Sending message to model: {}", model_clone);
-            if let Some(limit) = num_predict {
-                println!("[Ollama] Token limit (num_predict): {}", limit);
-            } else {
-                println!("[Ollama] Token limit: disabled");
+            let start_event_id = audit::new_id();
+            let options_json = match num_predict {
+                Some(limit) => serde_json::json!({ "num_predict": limit }),
+                None => serde_json::json!({}),
+            };
+
+            tracing::info!(
+                request_id = %request_id,
+                model = %model_clone,
+                num_predict = ?num_predict,
+                message_len = message.len(),
+                "ollama request start"
+            );
+
+            let start_record = AuditRecord {
+                schema_version: SCHEMA_VERSION,
+                kind: "ollama_start",
+                ts: audit::now_rfc3339(),
+                conversation_id: conversation_id.clone(),
+                request_id: request_id.clone(),
+                event_id: start_event_id.clone(),
+                details: serde_json::json!({
+                    "model": model_clone,
+                    "endpoint": format!("{}/api/chat", OLLAMA_URL),
+                    "num_predict": num_predict,
+                    "options": options_json,
+                    "prompt_len": message.len(),
+                }),
+            };
+            if let Err(e) = audit_handle.append_json_line(&start_record) {
+                tracing::warn!(error = %e, request_id = %request_id, "audit append failed");
             }
-            println!("[Ollama] Message: {}", message);
 
             let client = reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .build();
 
             if let Ok(client) = client {
-                // Note: User message is already added in chat.rs, so we don't add it here
-                // Build request body conditionally based on whether num_predict is enabled
                 let mut request_body = serde_json::json!({
                     "model": model_clone,
                     "messages": [
@@ -111,16 +156,18 @@ impl OllamaController {
                     ],
                     "stream": false
                 });
-                
-                // Only add num_predict to options if it's specified
+
                 if let Some(limit) = num_predict {
                     request_body["options"] = serde_json::json!({
                         "num_predict": limit
                     });
                 }
 
-                println!("[Ollama] Request URL: {}/api/chat", OLLAMA_URL);
-                println!("[Ollama] Request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+                tracing::debug!(
+                    request_id = %request_id,
+                    url = %format!("{}/api/chat", OLLAMA_URL),
+                    "ollama HTTP POST"
+                );
 
                 let response_result = client
                     .post(format!("{}/api/chat", OLLAMA_URL))
@@ -130,166 +177,374 @@ impl OllamaController {
                 match response_result {
                     Ok(response) => {
                         let status = response.status();
-                        println!("[Ollama] Response status: {} {}", status.as_u16(), status.as_str());
-                        
+                        let status_u16 = status.as_u16();
+                        tracing::info!(
+                            request_id = %request_id,
+                            status = status_u16,
+                            "ollama HTTP response status"
+                        );
+
                         if !status.is_success() {
-                            println!("[Ollama] ERROR: HTTP request failed with status {}", status);
                             let error_text = response.text().ok();
-                            if let Some(text) = error_text {
-                                println!("[Ollama] Response body: {}", text);
-                            }
-                            // Send error message to clear the spinner
-                            let error_msg = ChatMessage {
-                                content: format!("Error: HTTP request failed with status {}", status),
-                                from: Some("System".to_string()),
+                            tracing::warn!(
+                                request_id = %request_id,
+                                status = status_u16,
+                                body = ?error_text.as_ref().map(|s| s.len()),
+                                "ollama HTTP error status"
+                            );
+                            let end_record = AuditRecord {
+                                schema_version: SCHEMA_VERSION,
+                                kind: "ollama_end",
+                                ts: audit::now_rfc3339(),
+                                conversation_id: conversation_id.clone(),
+                                request_id: request_id.clone(),
+                                event_id: audit::new_id(),
+                                details: serde_json::json!({
+                                    "http_status": status_u16,
+                                    "success": false,
+                                    "error_body_len": error_text.as_ref().map(|s| s.len()),
+                                }),
                             };
+                            let _ = audit_handle.append_json_line(&end_record);
+
+                            let error_msg = correlated_chat_message(
+                                format!("Error: HTTP request failed with status {}", status),
+                                Some("System".to_string()),
+                                &conversation_id,
+                                &request_id,
+                            );
                             send_fn(error_msg);
                             return;
                         }
 
-                        // Read response text first
                         let response_text = match response.text() {
                             Ok(text) => text,
                             Err(e) => {
-                                println!("[Ollama] ERROR: Failed to read response text: {}", e);
-                                // Send error message to clear the spinner
-                                let error_msg = ChatMessage {
-                                    content: format!("Error: Failed to read response: {}", e),
-                                    from: Some("System".to_string()),
+                                tracing::warn!(request_id = %request_id, error = %e, "ollama read body failed");
+                                let end_record = AuditRecord {
+                                    schema_version: SCHEMA_VERSION,
+                                    kind: "ollama_end",
+                                    ts: audit::now_rfc3339(),
+                                    conversation_id: conversation_id.clone(),
+                                    request_id: request_id.clone(),
+                                    event_id: audit::new_id(),
+                                    details: serde_json::json!({
+                                        "http_status": status_u16,
+                                        "success": false,
+                                        "read_error": e.to_string(),
+                                    }),
                                 };
+                                let _ = audit_handle.append_json_line(&end_record);
+
+                                let error_msg = correlated_chat_message(
+                                    format!("Error: Failed to read response: {}", e),
+                                    Some("System".to_string()),
+                                    &conversation_id,
+                                    &request_id,
+                                );
                                 send_fn(error_msg);
                                 return;
                             }
                         };
 
-                        println!("[Ollama] Response text length: {} chars", response_text.len());
+                        tracing::debug!(
+                            request_id = %request_id,
+                            len = response_text.len(),
+                            "ollama response body"
+                        );
 
-                        // Parse JSON
                         match serde_json::from_str::<serde_json::Value>(&response_text) {
                             Ok(json) => {
-                                println!("[Ollama] Response JSON parsed successfully");
-                                
-                                // Check for error in response
                                 if let Some(error) = json.get("error") {
-                                    println!("[Ollama] ERROR in response: {}", error);
                                     let error_msg = if let Some(error_str) = error.as_str() {
                                         format!("Error: {}", error_str)
                                     } else {
                                         format!("Error: {}", error)
                                     };
-                                    println!("[Ollama] Error message: {}", error_msg);
-                                    // Send error message to clear the spinner
-                                    let chat_error = ChatMessage {
-                                        content: error_msg,
-                                        from: Some("System".to_string()),
+                                    tracing::warn!(
+                                        request_id = %request_id,
+                                        error = %error_msg,
+                                        "ollama error field in JSON"
+                                    );
+                                    let end_record = AuditRecord {
+                                        schema_version: SCHEMA_VERSION,
+                                        kind: "ollama_end",
+                                        ts: audit::now_rfc3339(),
+                                        conversation_id: conversation_id.clone(),
+                                        request_id: request_id.clone(),
+                                        event_id: audit::new_id(),
+                                        details: serde_json::json!({
+                                            "http_status": status_u16,
+                                            "success": false,
+                                            "ollama_error": error_msg.clone(),
+                                        }),
                                     };
+                                    let _ = audit_handle.append_json_line(&end_record);
+
+                                    let chat_error = correlated_chat_message(
+                                        error_msg,
+                                        Some("System".to_string()),
+                                        &conversation_id,
+                                        &request_id,
+                                    );
                                     send_fn(chat_error);
                                     return;
                                 }
 
                                 if let Some(message_obj) = json.get("message") {
-                                    println!("[Ollama] Message object found in response");
-                                    println!("[Ollama] Message object structure: {}", serde_json::to_string_pretty(message_obj).unwrap_or_default());
-                                    
-                                    // Check if content exists and is not empty
                                     if let Some(content_value) = message_obj.get("content") {
-                                        println!("[Ollama] Content field exists, type: {:?}", content_value);
-                                        
                                         if let Some(content) = content_value.as_str() {
-                                            println!("[Ollama] Content as string: '{}' ({} chars)", content, content.len());
-                                            
                                             if content.is_empty() {
-                                                println!("[Ollama] WARNING: Content is empty string!");
-                                                // Try to get content from other possible fields (thinking, response, etc.)
-                                                let alternative_content = message_obj.get("thinking")
+                                                let alternative_content = message_obj
+                                                    .get("thinking")
                                                     .and_then(|t| t.as_str())
                                                     .or_else(|| json.get("response").and_then(|r| r.as_str()));
-                                                
+
                                                 if let Some(response_text) = alternative_content {
                                                     let field_name = if message_obj.get("thinking").is_some() {
                                                         "thinking"
                                                     } else {
                                                         "response"
                                                     };
-                                                    println!("[Ollama] Found '{}' field instead: {} chars", field_name, response_text.len());
+                                                    tracing::debug!(
+                                                        request_id = %request_id,
+                                                        field = field_name,
+                                                        len = response_text.len(),
+                                                        "ollama using alternate content field"
+                                                    );
                                                     let from_text = format!("Ollama {}", model_clone);
-                                                    let ollama_msg = ChatMessage {
-                                                        content: response_text.to_string(),
-                                                        from: Some(from_text),
+                                                    let ollama_msg = correlated_chat_message(
+                                                        response_text.to_string(),
+                                                        Some(from_text),
+                                                        &conversation_id,
+                                                        &request_id,
+                                                    );
+                                                    let end_record = AuditRecord {
+                                                        schema_version: SCHEMA_VERSION,
+                                                        kind: "ollama_end",
+                                                        ts: audit::now_rfc3339(),
+                                                        conversation_id: conversation_id.clone(),
+                                                        request_id: request_id.clone(),
+                                                        event_id: audit::new_id(),
+                                                        details: serde_json::json!({
+                                                            "http_status": status_u16,
+                                                            "success": true,
+                                                            "assistant_content_len": response_text.len(),
+                                                            "content_field": field_name,
+                                                        }),
                                                     };
+                                                    let _ = audit_handle.append_json_line(&end_record);
                                                     send_fn(ollama_msg);
-                                                    println!("[Ollama] Message sent to chat UI (from '{}' field)", field_name);
                                                 } else {
-                                                    println!("[Ollama] ERROR: Content is empty and no alternative field found");
-                                                    // Send error message to clear the spinner
-                                                    let error_msg = ChatMessage {
-                                                        content: "Error: Empty response from Ollama".to_string(),
-                                                        from: Some("System".to_string()),
+                                                    tracing::warn!(
+                                                        request_id = %request_id,
+                                                        "ollama empty content"
+                                                    );
+                                                    let end_record = AuditRecord {
+                                                        schema_version: SCHEMA_VERSION,
+                                                        kind: "ollama_end",
+                                                        ts: audit::now_rfc3339(),
+                                                        conversation_id: conversation_id.clone(),
+                                                        request_id: request_id.clone(),
+                                                        event_id: audit::new_id(),
+                                                        details: serde_json::json!({
+                                                            "http_status": status_u16,
+                                                            "success": false,
+                                                            "reason": "empty_content",
+                                                        }),
                                                     };
+                                                    let _ = audit_handle.append_json_line(&end_record);
+
+                                                    let error_msg = correlated_chat_message(
+                                                        "Error: Empty response from Ollama".to_string(),
+                                                        Some("System".to_string()),
+                                                        &conversation_id,
+                                                        &request_id,
+                                                    );
                                                     send_fn(error_msg);
                                                 }
                                             } else {
-                                                println!("[Ollama] SUCCESS: Message content extracted ({} chars)", content.len());
-                                                // Include model name in the from field: "Ollama model-name"
+                                                tracing::info!(
+                                                    request_id = %request_id,
+                                                    len = content.len(),
+                                                    "ollama assistant content"
+                                                );
                                                 let from_text = format!("Ollama {}", model_clone);
-                                                let ollama_msg = ChatMessage {
-                                                    content: content.to_string(),
-                                                    from: Some(from_text),
+                                                let ollama_msg = correlated_chat_message(
+                                                    content.to_string(),
+                                                    Some(from_text),
+                                                    &conversation_id,
+                                                    &request_id,
+                                                );
+                                                let end_record = AuditRecord {
+                                                    schema_version: SCHEMA_VERSION,
+                                                    kind: "ollama_end",
+                                                    ts: audit::now_rfc3339(),
+                                                    conversation_id: conversation_id.clone(),
+                                                    request_id: request_id.clone(),
+                                                    event_id: audit::new_id(),
+                                                    details: serde_json::json!({
+                                                        "http_status": status_u16,
+                                                        "success": true,
+                                                        "assistant_content_len": content.len(),
+                                                        "content_field": "content",
+                                                    }),
                                                 };
+                                                let _ = audit_handle.append_json_line(&end_record);
                                                 send_fn(ollama_msg);
-                                                println!("[Ollama] Message sent to chat UI");
                                             }
                                         } else {
-                                            println!("[Ollama] ERROR: Content field is not a string");
-                                            println!("[Ollama] Content value: {:?}", content_value);
-                                            // Send error message to clear the spinner
-                                            let error_msg = ChatMessage {
-                                                content: "Error: Invalid content format from Ollama".to_string(),
-                                                from: Some("System".to_string()),
+                                            tracing::warn!(
+                                                request_id = %request_id,
+                                                "ollama content not a string"
+                                            );
+                                            let end_record = AuditRecord {
+                                                schema_version: SCHEMA_VERSION,
+                                                kind: "ollama_end",
+                                                ts: audit::now_rfc3339(),
+                                                conversation_id: conversation_id.clone(),
+                                                request_id: request_id.clone(),
+                                                event_id: audit::new_id(),
+                                                details: serde_json::json!({
+                                                    "http_status": status_u16,
+                                                    "success": false,
+                                                    "reason": "invalid_content_type",
+                                                }),
                                             };
+                                            let _ = audit_handle.append_json_line(&end_record);
+
+                                            let error_msg = correlated_chat_message(
+                                                "Error: Invalid content format from Ollama".to_string(),
+                                                Some("System".to_string()),
+                                                &conversation_id,
+                                                &request_id,
+                                            );
                                             send_fn(error_msg);
                                         }
                                     } else {
-                                        println!("[Ollama] ERROR: No 'content' field in message object");
-                                        println!("[Ollama] Message object: {}", serde_json::to_string_pretty(message_obj).unwrap_or_default());
-                                        // Send error message to clear the spinner
-                                        let error_msg = ChatMessage {
-                                            content: "Error: Invalid response format from Ollama".to_string(),
-                                            from: Some("System".to_string()),
+                                        tracing::warn!(request_id = %request_id, "ollama missing content");
+                                        let end_record = AuditRecord {
+                                            schema_version: SCHEMA_VERSION,
+                                            kind: "ollama_end",
+                                            ts: audit::now_rfc3339(),
+                                            conversation_id: conversation_id.clone(),
+                                            request_id: request_id.clone(),
+                                            event_id: audit::new_id(),
+                                            details: serde_json::json!({
+                                                "http_status": status_u16,
+                                                "success": false,
+                                                "reason": "missing_content",
+                                            }),
                                         };
+                                        let _ = audit_handle.append_json_line(&end_record);
+
+                                        let error_msg = correlated_chat_message(
+                                            "Error: Invalid response format from Ollama".to_string(),
+                                            Some("System".to_string()),
+                                            &conversation_id,
+                                            &request_id,
+                                        );
                                         send_fn(error_msg);
                                     }
                                 } else {
-                                    println!("[Ollama] ERROR: No 'message' field in response");
-                                    println!("[Ollama] Full response: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
-                                    // Send error message to clear the spinner
-                                    let error_msg = ChatMessage {
-                                        content: "Error: Invalid response format from Ollama".to_string(),
-                                        from: Some("System".to_string()),
+                                    tracing::warn!(request_id = %request_id, "ollama missing message field");
+                                    let end_record = AuditRecord {
+                                        schema_version: SCHEMA_VERSION,
+                                        kind: "ollama_end",
+                                        ts: audit::now_rfc3339(),
+                                        conversation_id: conversation_id.clone(),
+                                        request_id: request_id.clone(),
+                                        event_id: audit::new_id(),
+                                        details: serde_json::json!({
+                                            "http_status": status_u16,
+                                            "success": false,
+                                            "reason": "missing_message",
+                                        }),
                                     };
+                                    let _ = audit_handle.append_json_line(&end_record);
+
+                                    let error_msg = correlated_chat_message(
+                                        "Error: Invalid response format from Ollama".to_string(),
+                                        Some("System".to_string()),
+                                        &conversation_id,
+                                        &request_id,
+                                    );
                                     send_fn(error_msg);
                                 }
                             }
                             Err(e) => {
-                                println!("[Ollama] ERROR: Failed to parse JSON response: {}", e);
-                                println!("[Ollama] Response text (first 500 chars): {}", 
-                                    response_text.chars().take(500).collect::<String>());
+                                tracing::warn!(
+                                    request_id = %request_id,
+                                    error = %e,
+                                    "ollama JSON parse failed"
+                                );
+                                let end_record = AuditRecord {
+                                    schema_version: SCHEMA_VERSION,
+                                    kind: "ollama_end",
+                                    ts: audit::now_rfc3339(),
+                                    conversation_id: conversation_id.clone(),
+                                    request_id: request_id.clone(),
+                                    event_id: audit::new_id(),
+                                    details: serde_json::json!({
+                                        "http_status": status_u16,
+                                        "success": false,
+                                        "parse_error": e.to_string(),
+                                        "response_preview_len": response_text.len(),
+                                    }),
+                                };
+                                let _ = audit_handle.append_json_line(&end_record);
+
+                                let error_msg = correlated_chat_message(
+                                    format!("Error: Failed to parse Ollama response: {}", e),
+                                    Some("System".to_string()),
+                                    &conversation_id,
+                                    &request_id,
+                                );
+                                send_fn(error_msg);
                             }
                         }
                     }
                     Err(e) => {
-                        println!("[Ollama] ERROR: HTTP request failed: {}", e);
-                        println!("[Ollama] Error details: {:?}", e);
-                        // Send error message to clear the spinner
-                        let error_msg = ChatMessage {
-                            content: format!("Error: HTTP request failed: {}", e),
-                                from: Some("System".to_string()),
+                        tracing::warn!(request_id = %request_id, error = %e, "ollama HTTP request failed");
+                        let end_record = AuditRecord {
+                            schema_version: SCHEMA_VERSION,
+                            kind: "ollama_end",
+                            ts: audit::now_rfc3339(),
+                            conversation_id: conversation_id.clone(),
+                            request_id: request_id.clone(),
+                            event_id: audit::new_id(),
+                            details: serde_json::json!({
+                                "http_status": null,
+                                "success": false,
+                                "transport_error": e.to_string(),
+                            }),
                         };
+                        let _ = audit_handle.append_json_line(&end_record);
+
+                        let error_msg = correlated_chat_message(
+                            format!("Error: HTTP request failed: {}", e),
+                            Some("System".to_string()),
+                            &conversation_id,
+                            &request_id,
+                        );
                         send_fn(error_msg);
                     }
                 }
             } else {
-                println!("[Ollama] ERROR: Failed to create HTTP client");
+                tracing::error!(request_id = %request_id, "ollama failed to create HTTP client");
+                let end_record = AuditRecord {
+                    schema_version: SCHEMA_VERSION,
+                    kind: "ollama_end",
+                    ts: audit::now_rfc3339(),
+                    conversation_id: conversation_id.clone(),
+                    request_id: request_id.clone(),
+                    event_id: audit::new_id(),
+                    details: serde_json::json!({
+                        "success": false,
+                        "reason": "client_build_failed",
+                    }),
+                };
+                let _ = audit_handle.append_json_line(&end_record);
             }
         });
     }
@@ -307,10 +562,7 @@ fn fetch_models_inner(models: Arc<Mutex<Vec<String>>>) {
         .build();
 
     let model_list = if let Ok(client) = client {
-        if let Ok(response) = client
-            .get(format!("{}/api/tags", OLLAMA_URL))
-            .send()
-        {
+        if let Ok(response) = client.get(format!("{}/api/tags", OLLAMA_URL)).send() {
             if let Ok(json) = response.json::<serde_json::Value>() {
                 if let Some(models_array) = json.get("models").and_then(|m| m.as_array()) {
                     models_array
@@ -336,4 +588,3 @@ fn fetch_models_inner(models: Arc<Mutex<Vec<String>>>) {
 
     *models.lock().unwrap() = model_list;
 }
-

@@ -3,11 +3,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{Align, Frame, Layout, ScrollArea, Ui, Vec2};
 use egui_inbox::UiInbox;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+
+#[derive(Debug, Clone)]
+pub struct MessageCorrelation {
+    /// Carried for audit/export; IDs are also written to JSONL from server/ollama paths.
+    #[allow(dead_code)]
+    pub conversation_id: String,
+    #[allow(dead_code)]
+    pub event_id: String,
+    #[allow(dead_code)]
+    pub request_id: String,
+    pub timestamp_rfc3339: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
     pub content: String,
     pub from: Option<String>,
+    pub correlation: Option<MessageCorrelation>,
 }
 
 #[derive(Debug)]
@@ -55,6 +70,16 @@ impl ChatExample {
         format!("{hours:02}:{minutes:02}:{seconds:02}")
     }
 
+    fn display_time_for_message(msg: &ChatMessage) -> String {
+        if let Some(c) = &msg.correlation {
+            if let Ok(odt) = OffsetDateTime::parse(&c.timestamp_rfc3339, &Rfc3339) {
+                let t = odt.time();
+                return format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second());
+            }
+        }
+        Self::current_timestamp_string()
+    }
+
     pub fn new() -> Self {
         let history_loader = Arc::new(HistoryLoader::new());
         let inbox = UiInbox::new();
@@ -64,6 +89,7 @@ impl ChatExample {
             ChatMessage {
                 content: "ams-chat Started".to_string(),
                 from: Some("System".to_string()),
+                correlation: None,
             }
         ];
 
@@ -104,11 +130,14 @@ impl ChatExample {
             .iter()
             .enumerate()
             .map(|(idx, msg)| {
-                let ts = self
-                    .message_timestamps
-                    .get(idx)
-                    .cloned()
-                    .unwrap_or_else(|| "--:--:--".to_string());
+                let ts = if let Some(c) = &msg.correlation {
+                    c.timestamp_rfc3339.clone()
+                } else {
+                    self.message_timestamps
+                        .get(idx)
+                        .cloned()
+                        .unwrap_or_else(|| "--:--:--".to_string())
+                };
                 let from = msg.from.clone().unwrap_or_else(|| "Unknown".to_string());
                 (ts, from, msg.content.clone())
             })
@@ -125,8 +154,9 @@ impl ChatExample {
         self.inbox.read(ui).for_each(|message| {
             // Only add non-empty messages to prevent spacing issues
             if !message.content.trim().is_empty() {
+                let ts = Self::display_time_for_message(&message);
                 self.messages.push(message);
-                self.message_timestamps.push(Self::current_timestamp_string());
+                self.message_timestamps.push(ts);
             }
         });
 
@@ -367,6 +397,7 @@ impl ChatExample {
                                 let user_message = ChatMessage {
                                     content: message_text.clone(),
                                     from: Some("Human".to_string()),
+                                    correlation: None,
                                 };
                                 self.messages.push(user_message);
                                 self.message_timestamps.push(Self::current_timestamp_string());
@@ -380,6 +411,7 @@ impl ChatExample {
                                     let bot_message = ChatMessage {
                                         content: "Please select a model".to_string(),
                                         from: Some("System".to_string()),
+                                        correlation: None,
                                     };
                                     tx.send(bot_message).ok();
                                 }

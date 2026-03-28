@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui::Frame;
 
+use crate::audit::AuditHandle;
 use crate::chat::ChatExample;
 use crate::ollama::{OllamaController, OllamaStatus};
 
@@ -10,6 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct MyApp {
     pub chat: ChatExample,
     pub selected_model: String,
+    pub conversation_id: String,
+    pub audit: Arc<AuditHandle>,
     server_status: ServerStatus,
     pub server_enabled: Arc<Mutex<bool>>,
     /// Set once on first frame so Catppuccin Latte replaces default dark styling.
@@ -65,6 +68,8 @@ impl Default for MyApp {
         Self {
             chat: ChatExample::default(),
             selected_model: String::new(),
+            conversation_id: String::new(),
+            audit: Arc::new(crate::audit::AuditHandle::disabled()),
             server_status: ServerStatus::Running, // Assume running since server starts before UI
             server_enabled: Arc::new(Mutex::new(true)),
             theme_applied: false,
@@ -568,12 +573,17 @@ impl eframe::App for MyApp {
                                                     let system_message = crate::chat::ChatMessage {
                                                         content: format!("Testing Ollama API: {}", message),
                                                         from: Some("System".to_string()),
+                                                        correlation: None,
                                                     };
                                                     tx.send(system_message).ok();
+                                                    let request_id = crate::audit::new_id();
                                                     self.ollama.send_message(
                                                         model,
                                                         message,
                                                         token_limit,
+                                                        self.audit.clone(),
+                                                        self.conversation_id.clone(),
+                                                        request_id,
                                                         Box::new(move |msg| {
                                                             tx.send(msg).ok();
                                                         }),
@@ -627,6 +637,8 @@ impl eframe::App for MyApp {
                             let tx = self.chat.inbox().sender();
                             
                             let waiting_flag = self.chat.waiting_for_response().clone();
+                            let audit_for_chat = self.audit.clone();
+                            let conversation_for_chat = self.conversation_id.clone();
                             self.chat.set_message_handler(Box::new(move |message: String| {
                                 let tx_clone = tx.clone();
                                 if selected_model.is_empty() {
@@ -634,6 +646,7 @@ impl eframe::App for MyApp {
                                     let bot_message = crate::chat::ChatMessage {
                                         content: "Please select Ollama Model.".to_string(),
                                         from: Some("System".to_string()),
+                                        correlation: None,
                                     };
                                     tx_clone.send(bot_message).ok();
                                 } else if ollama_status == crate::ollama::OllamaStatus::Running {
@@ -644,10 +657,14 @@ impl eframe::App for MyApp {
                                     let model_clone = selected_model.clone();
                                     let tx_for_ollama = tx_clone.clone();
                                     let waiting_flag_clone = waiting_flag.clone();
+                                    let request_id = crate::audit::new_id();
                                     ollama_controller.send_message(
                                         model_clone,
                                         message,
                                         chat_token_limit,
+                                        audit_for_chat.clone(),
+                                        conversation_for_chat.clone(),
+                                        request_id,
                                         Box::new(move |msg| {
                                             // Clear waiting flag when response arrives
                                             *waiting_flag_clone.lock().unwrap() = false;
@@ -659,6 +676,7 @@ impl eframe::App for MyApp {
                                     let bot_message = crate::chat::ChatMessage {
                                         content: "Ollama is not running. Please check Ollama status.".to_string(),
                                         from: Some("System".to_string()),
+                                        correlation: None,
                                     };
                                     tx_clone.send(bot_message).ok();
                                 }

@@ -86,7 +86,7 @@ impl ChatExample {
     /// Default welcome line when no SQLite history exists.
     pub fn default_welcome() -> (ChatMessage, String) {
         let msg = ChatMessage {
-            content: "ams-chat Started".to_string(),
+            content: "openchat-cogsci Started".to_string(),
             from: Some("System".to_string()),
             correlation: None,
             source: MessageSource::System,

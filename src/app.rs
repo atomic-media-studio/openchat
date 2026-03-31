@@ -791,7 +791,7 @@ impl eframe::App for MyApp {
                                 }
                                 LeftColumnTab::About => {
                                     ui.vertical(|ui| {
-                                        ui.label("ams-chat");
+                                        ui.label("openchat-cogsci");
                                     });
                                 }
                             }

@@ -45,7 +45,7 @@ fn main() -> eframe::Result<()> {
         conversation_id = %conv_id,
         path = ?audit_handle.path(),
         db = ?store.path(),
-        "ams-chat startup"
+        "openchat-cogsci startup"
     );
 
     let mut chat = ChatExample::new();
@@ -109,7 +109,7 @@ fn main() -> eframe::Result<()> {
     let app_store = store.clone();
     let app_settings = settings;
     eframe::run_native(
-        "ams-chat",
+        "openchat-cogsci",
         options,
         Box::new(move |_cc| {
             let mut app = MyApp::default();

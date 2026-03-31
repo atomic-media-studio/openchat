@@ -1,6 +1,6 @@
 [package]
-name = "ams-chat"
-description = "A general chat widget for egui"
+name = "openchat-cogsci"
+description = "A general chat widget for HCI and cognitive sciences"
 version = "0.1.0"
 edition = "2024"
 
